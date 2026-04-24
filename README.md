@@ -13,6 +13,7 @@ An interactive dashboard that quantifies bipartisan cooperation in U.S. Congress
 - **Leaderboards** — All lawmakers ranked by bipartisan score and betweenness centrality on the backbone
 - **Policy Area Heatmap** — ABI by policy area over time
 - **Community Detection** — Clusters of lawmakers detected via modularity optimization
+- **External Validation** — Scripts to reproduce member-level correlations against the Lugar Center Bipartisan Index and the Center for Effective Lawmaking's Legislative Effectiveness Scores (LES)
 
 ## Quick Start
 
@@ -64,7 +65,7 @@ Projects the bipartite (bill-legislator) network into a one-mode (legislator-leg
 
 ### Stage 3: SDSM Backbone Extraction (`build_backbone.py`)
 
-Applies the Stochastic Degree Sequence Model (Neal, 2014) to test each legislator pair against a null model that preserves activity levels. For each pair, computes expected co-occurrence (`mu = d_i * d_j / B`) and classifies the edge:
+Applies the Stochastic Degree Sequence Model (Neal, 2014) to test each legislator pair against a null model that preserves activity levels. For each pair, computes expected co-occurrence (`mu = (d_i * d_j) / B`) and classifies the edge:
 
 - **Positive** — significantly more cosponsorship than expected (cooperation)
 - **Negative** — significantly less than expected (avoidance)
@@ -85,24 +86,88 @@ Computes on the positive-edge backbone:
 
 Reads metrics JSON and generates a single self-contained HTML file with D3.js and Plotly.js visualizations. The network shows only statistically significant cooperation ties.
 
+## Evaluation
+
+Four evaluation components validate the system against external measures and test usability. Scripts for the two quantitative evaluations are included; run them after Stage 4 has produced `metrics/metrics_{108..119}.json`.
+
+### Evaluation 1: External validation against the Lugar Center Bipartisan Index
+
+Correlates per-member bipartisanship scores (both the raw proportion score and the SDSM-backbone score) against the Lugar/McCourt Bipartisan Index for the 114th-118th Congresses.
+
+```bash
+# Scrape Lugar ranking tables into lugar_data/ (takes ~10 seconds)
+python scrape_lugar.py
+
+# Compute correlations and produce figures/tables in eval1_outputs/
+python eval1_lugar_correlation.py
+```
+
+Outputs:
+- `eval1_outputs/correlations.csv` — Pearson and Spearman r per Congress-chamber, for both scores
+- `eval1_outputs/scatter_grid_raw.png` — scatter grid of raw score vs Lugar BPI
+- `eval1_outputs/scatter_grid_backbone.png` — scatter grid of backbone score vs Lugar BPI
+- `eval1_outputs/merged_long.csv` — full joined dataset
+- `eval1_outputs/top_divergences_raw.csv` — members whose raw score and Lugar rank diverge most
+- `eval1_outputs/unmatched.csv` — Lugar rows we couldn't match (mostly leadership and mid-Congress replacements)
+
+### Evaluation 2: Effectiveness correlation against Legislative Effectiveness Scores (LES)
+
+Tests whether bipartisanship predicts legislative effectiveness, replicating Harbridge-Yong, Volden & Wiseman (2023) using our own bipartisanship measure. Uses LES 1.0 (Classic) from the Center for Effective Lawmaking (Volden & Wiseman, 2014).
+
+Before running, download the two CEL datasets from https://thelawmakers.org/data-download and place them in `cel_data/` at the repo root:
+- "All House data from 93rd-118th Congress" — save as `cel_data/CELHouse93to118-REVISED-06.26.2025.xlsx`
+- "All Senate data from 93rd-118th Congress" — save as `cel_data/CELSenate93to118.xls`
+
+Then:
+
+```bash
+# Compute correlations and OLS regression with controls
+python eval2_les_correlation.py \
+    --cel-house  cel_data/CELHouse93to118-REVISED-06.26.2025.xlsx \
+    --cel-senate cel_data/CELSenate93to118.xls
+```
+
+Outputs:
+- `eval2_outputs/correlations.csv` — simple and benchmark-adjusted correlations per Congress-chamber, for both scores
+- `eval2_outputs/regression_raw.csv` — OLS regression output for the raw score (log(1+LES) ~ bp_rate + majority + seniority + chair + subchair, cluster-robust SEs by member)
+- `eval2_outputs/regression_backbone.csv` — same for the backbone score
+- `eval2_outputs/scatter_grid_raw_les.png` — scatter grid of raw score vs LES
+- `eval2_outputs/scatter_grid_raw_benchmark.png` — scatter grid of raw score vs LES/benchmark
+- `eval2_outputs/merged_long.csv` — full joined dataset
+
+Citation for CEL data: Volden, C., & Wiseman, A. E. (2014). *Legislative Effectiveness in the United States Congress*. Cambridge University Press; updated at www.thelawmakers.org.
+
 ## Methodology
 
 See [METHODOLOGY.md](METHODOLOGY.md) for a detailed explanation of the SDSM backbone extraction algorithm, all metrics, and a guide to every chart in the dashboard.
 
-## Data Source
+## Data Sources
 
-All data comes from the U.S. Government Publishing Office via [GovInfo Bulk Data](https://www.govinfo.gov/bulkdata):
-
+Pipeline data: U.S. Government Publishing Office via [GovInfo Bulk Data](https://www.govinfo.gov/bulkdata):
 - [BILLSTATUS](https://www.govinfo.gov/bulkdata/BILLSTATUS) — bill metadata, sponsors, cosponsors, actions, committees (Congresses 108-119)
 - [BILLSUM](https://www.govinfo.gov/bulkdata/BILLSUM) — CRS bill summaries (Congresses 113-119)
+
+Evaluation data:
+- Lugar Center Bipartisan Index — scraped from https://www.thelugarcenter.org/ourwork-Bipartisan-Index.html by `scrape_lugar.py`
+- Center for Effective Lawmaking LES — downloaded manually from https://thelawmakers.org/data-download
 
 **Dataset characteristics**: ~141,000 bills across 12 Congresses (2003-2027), ~500MB+ of parsed JSON. The data is temporal, spanning 24 years of legislative activity. Each congress contains 8,000-16,500 bills with ~540-560 active legislators.
 
 ## Requirements
 
 - Python 3.10+
+
+Core pipeline:
 - `aiohttp` — async HTTP for bulk download
 - `networkx` — network analysis and community detection
 - `scipy` — normal CDF for SDSM p-values, FDR correction
 - `numpy` — numerical computation
 
+Evaluation scripts (additional):
+- `pandas` — data joining and tabular analysis
+- `matplotlib` — figure generation
+- `statsmodels` — OLS regression with cluster-robust standard errors
+- `openpyxl` — reading CEL .xlsx files
+- `xlrd` — reading CEL .xls files
+
+All dependencies are listed in `requirements.txt`.
